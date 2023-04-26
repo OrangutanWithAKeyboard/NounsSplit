@@ -4,12 +4,12 @@ const { ethers } = require("hardhat");
 async function depositNFTs(from, nounsNFT, daoSplit, startTokenId, endTokenId) {
   for (let i = startTokenId; i <= endTokenId; i++) {
     await nounsNFT.connect(from).approve(daoSplit.address, i);
-    await daoSplit.connect(from).deposit(i);
+    await daoSplit.connect(from).deposit(i, '');
   }
 }
 
 describe("DaoSplit", function () {
-  let DaoSplit, daoSplit, NounsNFT, nounsNFT, OgDAOMock, ogDaoMock, owner, addr1, addr2;
+  let DaoSplit, daoSplit, NounsNFT, nounsNFT, ogDao, owner, addr1, addr2;
 
   beforeEach(async function () {
     // Get signers
@@ -27,7 +27,7 @@ describe("DaoSplit", function () {
   
     // Deploy the DaoSplit contract
     DaoSplit = await ethers.getContractFactory("DaoSplit");
-    daoSplit = await DaoSplit.deploy(nounsNFT.address, ogDao.address, owner.address);
+    daoSplit = await DaoSplit.deploy(nounsNFT.address, ogDao.address);
     await daoSplit.deployed();
   
     // Mint some NFTs
@@ -41,7 +41,7 @@ describe("DaoSplit", function () {
 
   it("Should deposit 1 Noun", async function () {
     await nounsNFT.connect(addr1).approve(daoSplit.address, 1);
-    await daoSplit.connect(addr1).deposit(1);
+    await daoSplit.connect(addr1).deposit(1, '');
 
     expect(await daoSplit.depositedNouns()).to.equal(1);
     expect(await daoSplit.currentPeriod()).to.equal(0);
@@ -51,10 +51,10 @@ describe("DaoSplit", function () {
 
   it("Should deposit 2 Nouns", async function () {
     await nounsNFT.connect(addr1).approve(daoSplit.address, 1);
-    await daoSplit.connect(addr1).deposit(1);
+    await daoSplit.connect(addr1).deposit(1, '');
 
     await nounsNFT.connect(addr1).approve(daoSplit.address, 3);
-    await daoSplit.connect(addr1).deposit(3);
+    await daoSplit.connect(addr1).deposit(3, '');
 
     expect(await daoSplit.depositedNouns()).to.equal(2);
     expect(await daoSplit.currentPeriod()).to.equal(0);
@@ -64,15 +64,22 @@ describe("DaoSplit", function () {
   
   it("Should deposit 2 Nouns from 2 users", async function () {
     await nounsNFT.connect(addr1).approve(daoSplit.address, 1);
-    await daoSplit.connect(addr1).deposit(1);
+    await daoSplit.connect(addr1).deposit(1, '');
 
     await nounsNFT.connect(addr2).approve(daoSplit.address, 8);
-    await daoSplit.connect(addr2).deposit(8);
+    await daoSplit.connect(addr2).deposit(8, '');
 
     expect(await daoSplit.depositedNouns()).to.equal(2);
     expect(await daoSplit.currentPeriod()).to.equal(0);
     expect(await nounsNFT.ownerOf(1)).to.equal(daoSplit.address);
     expect(await nounsNFT.ownerOf(8)).to.equal(daoSplit.address);
+  });
+
+  it("Should deposit with reason", async function () {
+    await nounsNFT.connect(addr1).approve(daoSplit.address, 1);
+    await daoSplit.connect(addr1).deposit(1, 'Evil person taking over dao, must save dao');
+
+    expect((await daoSplit.depositedNounsInfo(1))[2]).to.equal('Evil person taking over dao, must save dao');
   });
 
   it("Should deposit and reach the split threshold", async function () {
@@ -86,7 +93,7 @@ describe("DaoSplit", function () {
     await depositNFTs(addr1, nounsNFT, daoSplit, 1, 7);
 
     await nounsNFT.connect(addr2).approve(daoSplit.address, 8);
-    await daoSplit.connect(addr2).deposit(8);
+    await daoSplit.connect(addr2).deposit(8, '');
 
     expect(await daoSplit.depositedNouns()).to.equal(8);
     expect(await daoSplit.currentPeriod()).to.equal(1);
@@ -95,7 +102,7 @@ describe("DaoSplit", function () {
 
   it("Should allow 1 withdrawal", async function () {
     await nounsNFT.connect(addr2).approve(daoSplit.address, 8);
-    await daoSplit.connect(addr2).deposit(8);
+    await daoSplit.connect(addr2).deposit(8, '');
 
     await daoSplit.connect(addr2).withdraw(8);
 
@@ -141,7 +148,7 @@ describe("DaoSplit", function () {
 
   it("Should revert on a repeat withdrawal", async function () {
     await nounsNFT.connect(addr2).approve(daoSplit.address, 8);
-    await daoSplit.connect(addr2).deposit(8);
+    await daoSplit.connect(addr2).deposit(8, '');
 
     await daoSplit.connect(addr2).withdraw(8);
     await expect(daoSplit.connect(addr2).withdraw(8)).to.be.revertedWith("Only the depositor can withdraw");
@@ -154,7 +161,7 @@ describe("DaoSplit", function () {
     await depositNFTs(addr1, nounsNFT, daoSplit, 1, 7);
 
     await nounsNFT.connect(addr2).approve(daoSplit.address, 8);
-    await daoSplit.connect(addr2).deposit(8);
+    await daoSplit.connect(addr2).deposit(8, '');
 
     await expect(daoSplit.connect(addr2).withdraw(8)).to.be.revertedWith("Withdrawals only allowed in pre split period");
     expect(await daoSplit.depositedNouns()).to.equal(8);
@@ -167,6 +174,75 @@ describe("DaoSplit", function () {
 
     await expect(daoSplit.triggerSplit()).to.be.revertedWith("Not in post split period");
   });
+
+  // Split Tests
+
+  it("Should move nouns after split period in 1 batch", async function () {
+    // Deposit NFTs
+    await depositNFTs(addr1, nounsNFT, daoSplit, 1, 7);
+  
+    // Move to post split period
+    await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]); // Increase time by 7 days
+    await ethers.provider.send("evm_mine"); // Mine the next block
+  
+    // Move Nouns to owner
+    await daoSplit.triggerSplitMoveNouns([1, 2, 3, 4, 5, 6, 7]);
+  
+    // Check if Nouns have been moved
+    for (let i = 1; i <= 7; i++) {
+      expect(await nounsNFT.ownerOf(i)).to.equal(ogDao.address);
+    }
+  });
+
+  it("Should move nouns after split period in 2 batches", async function () {
+    // Deposit NFTs
+    await depositNFTs(addr1, nounsNFT, daoSplit, 1, 7);
+  
+    // Move to post split period
+    await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]); // Increase time by 7 days
+    await ethers.provider.send("evm_mine"); // Mine the next block
+  
+    // Move Nouns to owner
+    await daoSplit.triggerSplitMoveNouns([5, 6, 7]);
+    await daoSplit.triggerSplitMoveNouns([1, 2, 3, 4]);
+
+  
+    // Check if Nouns have been moved
+    for (let i = 1; i <= 7; i++) {
+      expect(await nounsNFT.ownerOf(i)).to.equal(ogDao.address);
+    }
+  });
+  
+  it("Should triggerSplit after Nouns have been moved", async function () {
+    // Deposit NFTs
+    await depositNFTs(addr1, nounsNFT, daoSplit, 1, 7);
+  
+    // Move to post split period
+    await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]); // Increase time by 7 days
+    await ethers.provider.send("evm_mine"); // Mine the next block
+  
+    // Move Nouns to owner
+    await daoSplit.triggerSplitMoveNouns([1, 2, 3, 4, 5, 6, 7]);
+  
+    // Send the ETH
+    await owner.sendTransaction({
+      to: daoSplit.address,
+      value: ethers.utils.parseEther("10"),
+    });
+  
+    // Call triggerSplit
+    await daoSplit.triggerSplit();
+  
+    // Check if the contract's Ether balance is 10 ether
+    expect(await ethers.provider.getBalance(daoSplit.address)).to.equal("10000000000000000000");
+
+    // Check if the ogDao has been transferred all Nouns
+    expect(await nounsNFT.balanceOf(ogDao.address)).to.equal(7);
+
+    // Check if the DaoSplit has transferred all Nouns
+    expect(await nounsNFT.balanceOf(daoSplit.address)).to.equal(0);
+  });
+  
 
   // REDEMPTION TESTS
 

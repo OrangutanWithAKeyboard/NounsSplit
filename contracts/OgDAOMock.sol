@@ -19,6 +19,10 @@ contract OgDAOMock is IOgDAO {
 
     function transferAssets(address payable, uint256) external override {}
 
+    function getThresholdQuantity() external pure override returns (uint256) {
+        return 7;
+    }
+
     function getSupportedTokens()
         external
         view
@@ -36,4 +40,15 @@ contract OgDAOMock is IOgDAO {
     {
         return _supportedNFTs;
     }
+
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return this.onERC721Received.selector;
+    }
+
+    receive() external payable {}
 }

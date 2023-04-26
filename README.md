@@ -129,8 +129,35 @@ The contract includes several TODO comments, which indicate potential areas of i
 - Allowing multiple deposits in a single transaction.
 - Ensuring `triggerSplit()` has been called before `redeem()` is executed.
 - Reviewing the safety of the `.transfer` method used to send Ether.
-- Using `safeTransfer` for ERC20 tokens.
 - Reviewing and potentially optimizing the ERC721 transfer code.
+
+## OG DAO Split Period Documentation
+
+During the split period, regular OG DAO proposals should not be executable although currently they would be. This is a safety measure to prevent race conditions between the split flow and any potentially malicious proposals.
+
+## Checking the Current Period
+
+To check if the DAO is in the split period, OG DAO should call the `currentPeriod()` function in the `DaoSplit` contract. This function returns an enum value representing the current period.
+
+```solidity
+enum Period {
+    preSplit,
+    splitPeriod,
+    postSplit
+}
+
+function currentPeriod() public view returns (Period) {
+    // ...
+}
+```
+
+If the returned enum value is `splitPeriod`, no current proposals should be able to be executed in the OG DAO. This is a needed but trivial modification.
+
+## Potential Race Condition
+
+There is a known race condition when the `DaoSplit` transitions from the `splitPeriod` to the `postSplit` period. In the `postSplit` period, the funds are transferred from the OG DAO only once. However, once the `postSplit` period starts, the OG DAO can execute proposals again.
+
+This creates an attack vector where a malicious vote could potentially drain the treasury before the splitters have a chance to withdraw their share safely. This should be discussed and addressed.
 
 ## Conclusion
 

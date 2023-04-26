@@ -3,38 +3,39 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-// TODO:
-// - During this period regular OG DAO proposals can't be executed, to prevent race conditions between the split flow and any malicious proposals.
-
-interface IOgDAO {
+interface IOgDAO is IERC721Receiver {
     function transferAssets(address payable to, uint256 nounsCount) external;
 
     function getSupportedTokens() external view returns (address[] memory);
 
     function getSupportedNFTs() external view returns (address[] memory);
+
+    // This is a function in the OG DAO contract that we need to call to get the current threshold of nouns which excludes the ones that are in OgDAO's treasury.
+    function getThresholdQuantity() external view returns (uint256);
 }
 
 contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     using SafeMath for uint256;
 
-    uint256 public constant splitThreshold = 7;
+    // uint256 public constant getSplitThreshold()
     uint256 public depositedNouns;
     uint256 public splitEndTime;
 
     IERC721Enumerable public nounsNFT;
     IOgDAO public ogDao;
-    address public nounsDao;
 
     event Deposited(address indexed depositor, uint256 tokenId);
     event Withdrawn(address indexed depositor, uint256 tokenId);
     event SplitTriggered(address indexed caller);
     event SplitThresholdMet(uint256 splitEndTime);
     event Redeemed(address indexed redeemer, uint256 numNouns);
+    event SplitNounsMoved(uint256[] nounsArr);
 
     enum Period {
         preSplit,
@@ -45,15 +46,15 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     struct DepositedNoun {
         uint256 tokenId;
         address depositor;
+        string reason;
     }
 
     mapping(uint256 => DepositedNoun) public depositedNounsInfo;
     mapping(address => uint256[]) public depositorToNouns;
 
-    constructor(address _nounsNFT, address _ogDao, address _nounsDao) {
+    constructor(address _nounsNFT, address _ogDao) {
         nounsNFT = IERC721Enumerable(_nounsNFT);
         ogDao = IOgDAO(_ogDao);
-        nounsDao = _nounsDao;
     }
 
     modifier onlyInPostSplitPeriod() {
@@ -65,7 +66,7 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     }
 
     function currentPeriod() public view returns (Period) {
-        if (depositedNouns < splitThreshold) {
+        if (depositedNouns < getSplitThreshold()) {
             return Period.preSplit;
         }
         return
@@ -74,8 +75,15 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
                 : Period.postSplit;
     }
 
+    function getSplitThreshold() public view returns (uint256) {
+        return ogDao.getThresholdQuantity();
+    }
+
     // TODO: Allow for multiple deposits in one transaction
-    function deposit(uint256 tokenId) external nonReentrant {
+    function deposit(
+        uint256 tokenId,
+        string memory reason
+    ) external nonReentrant {
         require(
             currentPeriod() == Period.preSplit ||
                 currentPeriod() == Period.splitPeriod,
@@ -84,10 +92,14 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
 
         nounsNFT.safeTransferFrom(msg.sender, address(this), tokenId);
         depositedNouns++;
-        depositedNounsInfo[tokenId] = DepositedNoun(tokenId, msg.sender);
+        depositedNounsInfo[tokenId] = DepositedNoun(
+            tokenId,
+            msg.sender,
+            reason
+        );
         depositorToNouns[msg.sender].push(tokenId);
 
-        if (depositedNouns >= splitThreshold && splitEndTime == 0) {
+        if (depositedNouns >= getSplitThreshold() && splitEndTime == 0) {
             splitEndTime = block.timestamp + 7 days;
             emit SplitThresholdMet(splitEndTime);
         }
@@ -122,13 +134,28 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         nounsNFT.safeTransferFrom(address(this), msg.sender, tokenId);
     }
 
-    function triggerSplit() external onlyInPostSplitPeriod {
-        // TODO: This could theoretically run out of gas. Talk with the team about this and make assumptions explicit.
-        for (uint256 i = 0; i < depositedNouns; i++) {
-            uint256 tokenId = depositorToNouns[msg.sender][i];
-            nounsNFT.safeTransferFrom(address(this), nounsDao, tokenId);
+    // Can be called in batches with specific tokenIds to move nouns to the OG DAO.
+    function triggerSplitMoveNouns(
+        uint256[] memory nounsArr
+    ) external onlyInPostSplitPeriod {
+        require(nounsArr.length > 0, "Invalid nouns array");
+
+        for (uint256 i = 0; i < nounsArr.length; i++) {
+            nounsNFT.safeTransferFrom(
+                address(this),
+                address(ogDao),
+                nounsArr[i]
+            );
         }
 
+        emit SplitNounsMoved(nounsArr);
+    }
+
+    function triggerSplit() external onlyInPostSplitPeriod {
+        uint256 balance = nounsNFT.balanceOf(address(this));
+        require(balance == 0, "Nouns still in contract");
+
+        // TODO: needs to be implimented on OG DAO's side
         ogDao.transferAssets(payable(address(this)), depositedNouns);
 
         emit SplitTriggered(msg.sender);
@@ -157,8 +184,7 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
             IERC20 token = IERC20(erc20Tokens[i]);
             uint256 tokenBalance = token.balanceOf(address(this));
             uint256 tokenShare = (tokenBalance * userSharePercentage) / 1e18;
-            //TODO: use safeTransfer
-            token.transfer(msg.sender, tokenShare);
+            SafeERC20.safeTransfer(token, msg.sender, tokenShare);
         }
 
         //TODO: Review erc721 transfer code below
@@ -188,4 +214,6 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     ) external pure override returns (bytes4) {
         return this.onERC721Received.selector;
     }
+
+    receive() external payable nonReentrant {}
 }
