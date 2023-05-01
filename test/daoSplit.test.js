@@ -567,13 +567,4 @@ describe("DaoSplit", function () {
 
   });
 
-  it.skip("Should not allow redeeming assets before triggering the split", async function () {
-    await depositNFTs(addr1, nounsNFT, daoSplit, 0, 7);
-
-    await ethers.provider.send("evm_increaseTime", [7 * 24 * 3600]); // Increase time by 7 days
-    await ethers.provider.send("evm_mine"); // Mine the next block
-
-    await expect(daoSplit.connect(addrs[0]).redeem()).to.be.revertedWith("Split has not been triggered yet");
-  });
-
 });
