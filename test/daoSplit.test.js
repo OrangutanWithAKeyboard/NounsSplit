@@ -9,7 +9,7 @@ async function depositNFTs(from, nounsNFT, daoSplit, startTokenId, endTokenId) {
 }
 
 describe("DaoSplit", function () {
-  let DaoSplit, daoSplit, NounsNFT, nounsNFT, ogDao, owner, addr1, addr2;
+  let DaoSplit, daoSplit, NounsNFT, nounsNFT, mockToken, mockToken2, ogDao, owner, addr1, addr2;
 
   beforeEach(async function () {
     // Get signers
@@ -19,6 +19,13 @@ describe("DaoSplit", function () {
     NounsNFT = await ethers.getContractFactory("ERC721Mock");
     nounsNFT = await NounsNFT.deploy("NounsNFT", "NFT");
     await nounsNFT.deployed();
+
+    const ERC20Mock = await ethers.getContractFactory("ERC20Mock");
+    mockToken = await ERC20Mock.deploy("Mock Token", "MKRY");
+    await mockToken.deployed();
+
+    mockToken2 = await ERC20Mock.deploy("Mock Token2", "MKRY2");
+    await mockToken2.deployed();
   
     // Deploy a mock OgDAO contract
     OgDAO = await ethers.getContractFactory("OgDAOMock");
@@ -246,22 +253,87 @@ describe("DaoSplit", function () {
 
   // REDEMPTION TESTS
 
-  it.skip("Should trigger the split and let users redeem assets", async function () {
-    // Simulate asset transfer from OgDAO to DaoSplit
-    await ogDao.transferAssets(daoSplit.address, 7);
+  it("Should trigger the split and let 1 user redeem their 100% share", async function () {
+    // Mint 10,000 tokens to ogDao
+    await mockToken.connect(owner).mint(ogDao.address, 10000);
+    await mockToken2.connect(owner).mint(ogDao.address, 8000);
+    
+    const ogDaoBalanceBefore = await mockToken.balanceOf(ogDao.address);
+    expect(ogDaoBalanceBefore).to.equal(10000);
+
+    // Send the ETH
+    await owner.sendTransaction({
+      to: ogDao.address,
+      value: ethers.utils.parseEther("10"),
+    });
+
+    await ogDao.connect(owner).setSupportedTokens([mockToken.address, mockToken2.address]);
+
+    // Deposit NFTs
+    await depositNFTs(addr1, nounsNFT, daoSplit, 1, 7);
   
-    await depositNFTs(addr1, nounsNFT, daoSplit, 0, 7);
-  
-    await ethers.provider.send("evm_increaseTime", [7 * 24 * 3600]); // Increase time by 7 days
+    // Move to post split period
+    await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]); // Increase time by 7 days
     await ethers.provider.send("evm_mine"); // Mine the next block
   
-    await daoSplit.triggerSplit();
+    // Move Nouns to owner
+    await daoSplit.triggerSplitMoveNouns([1, 2, 3, 4, 5, 6, 7]);
   
-    // Redeem assets
-    for (let i = 0; i < 7; i++) {
-      await daoSplit.connect(addr1).redeem(i);
-      expect(await ethers.provider.getBalance(addr1.address)).to.be.above(ethers.utils.parseEther("0"));
+    // Check if Nouns have been moved
+    for (let i = 1; i <= 7; i++) {
+      expect(await nounsNFT.ownerOf(i)).to.equal(ogDao.address);
     }
+
+    const ogDaoBefore1 = await mockToken.balanceOf(ogDao.address);
+    expect(ogDaoBefore1).to.equal(10000);
+
+    const ogDaoBefore2 = await mockToken2.balanceOf(ogDao.address);
+    expect(ogDaoBefore2).to.equal(8000);
+
+    expect(await ethers.provider.getBalance(daoSplit.address)).to.equal("0");
+
+    // moves funds to daoSplit
+    await daoSplit.connect(owner).triggerSplit();
+
+    const ogDaoAfter = await mockToken.balanceOf(ogDao.address);
+    expect(ogDaoAfter).to.equal(0);
+
+    const daoSplitAfter = await mockToken.balanceOf(daoSplit.address);
+    expect(daoSplitAfter).to.equal(10000);
+
+    const ogDaoAfter2 = await mockToken2.balanceOf(ogDao.address);
+    expect(ogDaoAfter2).to.equal(0);
+
+    const daoSplitAfter2 = await mockToken2.balanceOf(daoSplit.address);
+    expect(daoSplitAfter2).to.equal(8000);
+
+    expect(await ethers.provider.getBalance(daoSplit.address)).to.equal("10000000000000000000");
+
+    // REDEEM
+
+    const addr1Before1 = await mockToken.balanceOf(addr1.address);
+    expect(addr1Before1).to.equal(0);
+
+    const addr1Before2 = await mockToken2.balanceOf(addr1.address);
+    expect(addr1Before2).to.equal(0);
+
+    // 10,000 ETH less gas
+    expect(await (await ethers.provider.getBalance(addr1.address)).toString().slice(0, 5)).to.equal("9999998538373005517296".slice(0, 5));
+
+    await daoSplit.connect(addr1).redeem();
+
+
+    // Checks if everything was redeemed
+
+    const addr1After1 = await mockToken.balanceOf(addr1.address);
+    expect(addr1After1).to.equal(10000);
+
+    const addr1After2 = await mockToken2.balanceOf(addr1.address);
+    expect(addr1After2).to.equal(8000);
+
+    // 10,010 ETH less gas
+    expect(await (await ethers.provider.getBalance(addr1.address)).toString().slice(0, 5)).to.equal("10009998399390210084704".slice(0, 5));
+
   });
 
   it.skip("Should not allow redeeming assets before triggering the split", async function () {

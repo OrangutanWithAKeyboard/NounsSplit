@@ -10,9 +10,9 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 interface IOgDAO is IERC721Receiver {
-    function transferAssets(address payable to, uint256 nounsCount) external;
-
-    function getSupportedTokens() external view returns (address[] memory);
+    function transferAssets(
+        address payable to
+    ) external returns (address[] memory);
 
     function getSupportedNFTs() external view returns (address[] memory);
 
@@ -23,9 +23,9 @@ interface IOgDAO is IERC721Receiver {
 contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     using SafeMath for uint256;
 
-    // uint256 public constant getSplitThreshold()
     uint256 public depositedNouns;
     uint256 public splitEndTime;
+    address[] public redeemableERC20s;
 
     IERC721Enumerable public nounsNFT;
     IOgDAO public ogDao;
@@ -156,7 +156,7 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         require(balance == 0, "Nouns still in contract");
 
         // TODO: needs to be implimented on OG DAO's side
-        ogDao.transferAssets(payable(address(this)), depositedNouns);
+        redeemableERC20s = ogDao.transferAssets(payable(address(this)));
 
         emit SplitTriggered(msg.sender);
     }
@@ -179,25 +179,11 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         payable(msg.sender).transfer(etherShare);
 
         // Transfer ERC20 tokens
-        address[] memory erc20Tokens = ogDao.getSupportedTokens();
-        for (uint256 i = 0; i < erc20Tokens.length; i++) {
-            IERC20 token = IERC20(erc20Tokens[i]);
+        for (uint256 i = 0; i < redeemableERC20s.length; i++) {
+            IERC20 token = IERC20(redeemableERC20s[i]);
             uint256 tokenBalance = token.balanceOf(address(this));
             uint256 tokenShare = (tokenBalance * userSharePercentage) / 1e18;
             SafeERC20.safeTransfer(token, msg.sender, tokenShare);
-        }
-
-        //TODO: Review erc721 transfer code below
-        // Transfer ERC721 tokens
-        address[] memory erc721Tokens = ogDao.getSupportedNFTs();
-        for (uint256 i = 0; i < erc721Tokens.length; i++) {
-            IERC721Enumerable nft = IERC721Enumerable(erc721Tokens[i]);
-            uint256 nftBalance = nft.balanceOf(address(this));
-            uint256 nftShare = (nftBalance * userSharePercentage) / 1e18;
-            for (uint256 j = 0; j < nftShare; j++) {
-                uint256 tokenId = nft.tokenOfOwnerByIndex(address(this), j);
-                nft.safeTransferFrom(address(this), msg.sender, tokenId);
-            }
         }
 
         // Remove redeemed Nouns
@@ -215,5 +201,6 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         return this.onERC721Received.selector;
     }
 
-    receive() external payable nonReentrant {}
+    // TODO: Should this be nonReentrant?
+    receive() external payable {}
 }

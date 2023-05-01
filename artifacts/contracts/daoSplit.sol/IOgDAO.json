@@ -18,19 +18,6 @@
     },
     {
       "inputs": [],
-      "name": "getSupportedTokens",
-      "outputs": [
-        {
-          "internalType": "address[]",
-          "name": "",
-          "type": "address[]"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [],
       "name": "getThresholdQuantity",
       "outputs": [
         {
@@ -82,15 +69,16 @@
           "internalType": "address payable",
           "name": "to",
           "type": "address"
-        },
-        {
-          "internalType": "uint256",
-          "name": "nounsCount",
-          "type": "uint256"
         }
       ],
       "name": "transferAssets",
-      "outputs": [],
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
+        }
+      ],
       "stateMutability": "nonpayable",
       "type": "function"
     }
