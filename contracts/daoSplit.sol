@@ -24,13 +24,14 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     using SafeMath for uint256;
 
     uint256 public depositedNouns;
+    uint256 public redeemedNouns;
     uint256 public splitEndTime;
     address[] public redeemableERC20s;
 
     IERC721Enumerable public nounsNFT;
     IOgDAO public ogDao;
 
-    event Deposited(address indexed depositor, uint256 tokenId);
+    event Deposited(address indexed depositor, uint256[] tokenIds);
     event Withdrawn(address indexed depositor, uint256 tokenId);
     event SplitTriggered(address indexed caller);
     event SplitThresholdMet(uint256 splitEndTime);
@@ -79,32 +80,35 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         return ogDao.getThresholdQuantity();
     }
 
-    // TODO: Allow for multiple deposits in one transaction
+    // Allows users to deposit multiple NFTs into the contract and associate a reason for depositing
     function deposit(
-        uint256 tokenId,
+        uint256[] memory tokenIds,
         string memory reason
     ) external nonReentrant {
         require(
-            currentPeriod() == Period.preSplit ||
-                currentPeriod() == Period.splitPeriod,
+            currentPeriod() != Period.postSplit,
             "Deposits not allowed in post split period"
         );
 
-        nounsNFT.safeTransferFrom(msg.sender, address(this), tokenId);
-        depositedNouns++;
-        depositedNounsInfo[tokenId] = DepositedNoun(
-            tokenId,
-            msg.sender,
-            reason
-        );
-        depositorToNouns[msg.sender].push(tokenId);
+        for (uint256 i = 0; i < tokenIds.length; i++) {
+            uint256 tokenId = tokenIds[i];
+
+            nounsNFT.safeTransferFrom(msg.sender, address(this), tokenId);
+            depositedNouns++;
+            depositedNounsInfo[tokenId] = DepositedNoun(
+                tokenId,
+                msg.sender,
+                reason
+            );
+            depositorToNouns[msg.sender].push(tokenId);
+        }
 
         if (depositedNouns >= getSplitThreshold() && splitEndTime == 0) {
             splitEndTime = block.timestamp + 7 days;
             emit SplitThresholdMet(splitEndTime);
         }
 
-        emit Deposited(msg.sender, tokenId);
+        emit Deposited(msg.sender, tokenIds);
     }
 
     function withdraw(uint256 tokenId) external nonReentrant {
@@ -135,6 +139,7 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
     }
 
     // Can be called in batches with specific tokenIds to move nouns to the OG DAO.
+    // Moves Nouns from this contract to the OG DAO, only allowed in the post-split period
     function triggerSplitMoveNouns(
         uint256[] memory nounsArr
     ) external onlyInPostSplitPeriod {
@@ -151,6 +156,7 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         emit SplitNounsMoved(nounsArr);
     }
 
+    // Request the OG DAO to transfer the correct assets to this split DAO contract, only allowed in the post-split period
     function triggerSplit() external onlyInPostSplitPeriod {
         uint256 balance = nounsNFT.balanceOf(address(this));
         require(balance == 0, "Nouns still in contract");
@@ -161,15 +167,16 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
         emit SplitTriggered(msg.sender);
     }
 
+    // Redeems the user's share of assets based on their deposited NFTs, only allowed in the post-split period
     function redeem() external nonReentrant onlyInPostSplitPeriod {
-        //TODO: Could add a function to ensure that triggerSplit has been called but this could also be up to the user to check.
+        //TODO: Could add a function to ensure that triggerSplit has been called but this could also be up to the user to check
         uint256[] storage depositorNouns = depositorToNouns[msg.sender];
         uint256 numNouns = depositorNouns.length;
         require(numNouns > 0, "No Nouns to redeem");
 
         // Calculate the user's share
-        uint256 totalNouns = depositedNouns;
-        uint256 userSharePercentage = (numNouns * 1e18) / totalNouns;
+        uint256 userSharePercentage = (numNouns * 1e18) /
+            (depositedNouns - redeemedNouns);
 
         // Transfer Ether
         uint256 etherBalance = address(this).balance;
@@ -186,12 +193,15 @@ contract DaoSplit is IERC721Receiver, ReentrancyGuard {
             SafeERC20.safeTransfer(token, msg.sender, tokenShare);
         }
 
+        redeemedNouns += numNouns;
+
         // Remove redeemed Nouns
         delete depositorToNouns[msg.sender];
 
         emit Redeemed(msg.sender, numNouns);
     }
 
+    // Implements the IERC721Receiver interface for receiving ERC721 tokens
     function onERC721Received(
         address,
         address,

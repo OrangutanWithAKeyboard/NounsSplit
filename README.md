@@ -1,5 +1,10 @@
 # DAO Split Contract Documentation
 
+## Specs Followed:
+- [eladmallel's](https://github.com/eladmallel) spec: https://github.com/verbsteam/dao-split-spec/blob/main/split-proposal-spec.md
+- https://hackmd.io/jctHoCh0STORZGyJIQKpMA?view&sa=D&source=docs&ust=1682973282155990&usg=AOvVaw3rWnVZDhn33ogY052p-vMz
+- https://deepfried.horse/2023/03/13/rage-quit/
+
 ## Overview
 
 The `DaoSplit` contract is designed to handle a split of assets between the original DAO and a new DAO, based on the deposited Nouns tokens. The contract allows users to deposit their Nouns tokens, triggering a split once a specific threshold is met. After the split, users can redeem their share of the split assets based on the number of Nouns they have deposited.
@@ -36,6 +41,7 @@ The contract defines the following constant:
 The contract uses the following state variables:
 
 - `depositedNouns`: A `uint256` representing the total number of deposited Nouns.
+- `redeemedNouns`: A `uint256` representing the total number of redeemed Nouns.
 - `splitEndTime`: A `uint256` representing the end time of the split period.
 - `nounsNFT`: An `IERC721Enumerable` instance representing the Nouns NFT contract.
 - `ogDao`: An `IOgDAO` instance representing the original DAO contract.
@@ -101,9 +107,11 @@ The contract has a single modifier:
 
 ### deposit()
 
-This function allows a user to deposit a Noun token into the contract. It checks whether the current period is `preSplit` or `splitPeriod` before proceeding. The function transfers the Noun token from the user to the contract and increments the `depositedNouns` counter. It also stores the depositor's address and token ID in the `depositedNounsInfo` mapping and the `depositorToNouns` mapping.
+This function allows a user to deposit multiple Noun tokens into the contract. It checks whether the current period is `preSplit` or `splitPeriod` before proceeding. The function transfers the Noun tokens from the user to the contract and increments the `depositedNouns` counter for each deposited token. It also stores the depositor's address, token IDs, and reason for depositing in the `depositedNounsInfo` mapping and the `depositorToNouns` mapping.
 
 If the number of deposited Nouns reaches the `splitThreshold` and `splitEndTime` is not set, the function sets the `splitEndTime` to the current block timestamp plus 7 days and emits the `SplitThresholdMet` event.
+
+The function accepts an array of Noun IDs, allowing users to deposit multiple Nouns in a single transaction.
 
 ### withdraw()
 
@@ -125,8 +133,6 @@ This function implements the `IERC721Receiver` interface, allowing the contract 
 
 The contract includes several TODO comments, which indicate potential areas of improvement or points that require further discussion:
 
-- Implementing a gas-optimized solution for the `triggerSplit()` function.
-- Allowing multiple deposits in a single transaction.
 - Ensuring `triggerSplit()` has been called before `redeem()` is executed.
 - Reviewing the safety of the `.transfer` method used to send Ether.
 - Reviewing and potentially optimizing the ERC721 transfer code.
